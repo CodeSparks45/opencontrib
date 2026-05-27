@@ -201,7 +201,7 @@ export default function Dashboard() {
   const [scope, setScope] = useState("gssoc");
   const [view, setView] = useState<View>("grid");
   const [toast, setToast] = useState("");
-  const toastTimer = useRef<NodeJS.Timeout>();
+const toastTimer = useRef<NodeJS.Timeout | null>(null);
   const [xp, setXp] = useState(650);
   const [streak, setStreak] = useState(7);
   const xpToNext = 1000;
@@ -219,7 +219,9 @@ export default function Dashboard() {
 
   const showToast = (msg: string) => {
     setToast(msg);
-    clearTimeout(toastTimer.current);
+    if (toastTimer.current) {
+  clearTimeout(toastTimer.current);
+}
     toastTimer.current = setTimeout(() => setToast(""), 3000);
   };
 
