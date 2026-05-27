@@ -25,6 +25,7 @@ export default function AIMatcher({ githubUsername, onIssueSelect }: AIMatcherPr
   const [techStack, setTechStack] = useState("");
   const [experience, setExperience] = useState("beginner");
   const [interests, setInterests] = useState("");
+  const [scope, setScope] = useState("gssoc");
 
   const runMatcher = async () => {
     setLoading(true);
@@ -35,7 +36,7 @@ export default function AIMatcher({ githubUsername, onIssueSelect }: AIMatcherPr
       const res = await fetch("/api/ai-match", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ techStack, experience, interests, githubUsername }),
+        body: JSON.stringify({ techStack, experience, interests, githubUsername, scope }),
       });
 
       if (!res.ok) throw new Error("API error");
@@ -58,13 +59,23 @@ export default function AIMatcher({ githubUsername, onIssueSelect }: AIMatcherPr
     <div className="space-y-6">
       {/* Input Panel */}
       <section className="bg-zinc-900/40 backdrop-blur-md border border-purple-500/20 rounded-3xl p-6 shadow-xl">
-        <h2 className="text-base font-semibold flex items-center gap-2 mb-5">
-          <Brain className="w-5 h-5 text-purple-400" />
-          AI Issue Matcher
-          <span className="text-xs bg-purple-600/30 text-purple-300 border border-purple-500/30 px-2 py-0.5 rounded-full ml-1">
-            Powered by Claude
-          </span>
-        </h2>
+        <div className="flex justify-between items-center mb-5">
+          <h2 className="text-base font-semibold flex items-center gap-2">
+            <Brain className="w-5 h-5 text-purple-400" />
+            AI Issue Matcher
+            <span className="text-xs bg-purple-600/30 text-purple-300 border border-purple-500/30 px-2 py-0.5 rounded-full ml-1">
+              Powered by Claude
+            </span>
+          </h2>
+          <select
+            value={scope}
+            onChange={(e) => setScope(e.target.value)}
+            className="bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-1.5 text-xs text-zinc-300 focus:outline-none"
+          >
+            <option value="gssoc">🎯 GSSoC Only</option>
+            <option value="worldwide">🌍 Worldwide</option>
+          </select>
+        </div>
 
         <div className="space-y-4">
           <div>

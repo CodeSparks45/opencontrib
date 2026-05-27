@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 export async function POST(req: NextRequest) {
   try {
-    const { techStack, experience, interests, githubUsername } = await req.json();
+    const { techStack, experience, interests, githubUsername, scope } = await req.json();
 
     if (!techStack) {
       return NextResponse.json({ error: "techStack is required" }, { status: 400 });
@@ -27,7 +27,11 @@ export async function POST(req: NextRequest) {
       .map((t: string) => langMap[t])
       .find(Boolean) || "";
 
-    const q = `is:issue is:open no:assignee label:"${labels}"${primaryLang ? ` language:${primaryLang}` : ""}`;
+    // DYNAMIC SCOPE LOGIC HERE
+    let q = `is:issue is:open no:assignee label:"${labels}"`;
+    if (scope === "gssoc") q += ` label:gssoc`;
+    if (primaryLang) q += ` language:${primaryLang}`;
+
     const githubRes = await fetch(
       `https://api.github.com/search/issues?q=${encodeURIComponent(q)}&sort=updated&order=desc&per_page=20`,
       {
