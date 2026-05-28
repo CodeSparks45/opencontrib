@@ -1,21 +1,21 @@
-import type { Metadata } from "next";
 import "./globals.css";
-import AuthProvider from "@/components/AuthProvider";
+import { Providers } from "./Providers";
 
-export const metadata: Metadata = {
-  title: "OpenContrib | Find Issues",
-  description: "Discover beginner-friendly open-source issues instantly.",
+export const metadata = {
+  title: "OpenContrib | GSSoC Issue Finder",
+  description: "The smartest way to discover open-source issues",
 };
 
 export default function RootLayout({
   children,
-}: Readonly<{
+}: {
   children: React.ReactNode;
-}>) {
+}) {
   return (
     <html lang="en">
-      <body className="antialiased">
-        <AuthProvider>{children}</AuthProvider>
+      <body>
+        {/* Ye Providers ab error ko permanently rok dega */}
+        <Providers>{children}</Providers>
       </body>
     </html>
   );
