@@ -1,6 +1,6 @@
 "use client";
 
-import { useSession } from "next-auth/react";
+import { signIn, useSession } from "next-auth/react";
 import { useEffect, useRef, useState } from "react";
 
 export default function LandingPage() {
@@ -11,6 +11,10 @@ export default function LandingPage() {
   // ── Particle canvas ──────────────────────────────────────────────────────────
   useEffect(() => {
     setMounted(true);
+    
+    // 🚨 EMERGENCY FIX: Mobile devices par animation mat chalao (Saves RAM to prevent "Aww Snap")
+    if (typeof window !== "undefined" && window.innerWidth < 768) return; 
+
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext("2d")!;
@@ -173,7 +177,17 @@ export default function LandingPage() {
 
         /* hero */
         .lp-hero{display:grid;grid-template-columns:1fr 1fr;gap:56px;align-items:center;padding:68px 32px 80px;max-width:1120px;margin:0 auto;position:relative;z-index:10;}
-        @media(max-width:768px){.lp-hero{grid-template-columns:1fr;gap:48px;}.lp-nav-links{display:none;}.lp-vis{display:none;}}
+        
+        @media(max-width:768px){
+          .lp-hero{grid-template-columns:1fr;gap:48px;}
+          .lp-nav-links{display:none;}
+          .lp-vis{display:none;}
+          /* 🚨 MOBILE CRASH & CLICK FIXES 🚨 */
+          .lp-wrap canvas { display: none !important; }
+          .lp-grid { opacity: 0.3; } 
+          .lp-btn { z-index: 999999 !important; padding: 14px 24px !important; }
+        }
+        
         .lp-badge{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:99px;background:rgba(0,229,255,.06);border:1px solid rgba(0,229,255,.2);margin-bottom:28px;font-size:11.5px;font-weight:700;color:var(--cyan);letter-spacing:.07em;text-transform:uppercase;opacity:0;animation:lp-fadeUp .6s .05s forwards;}
         .lp-pdot{width:6px;height:6px;border-radius:50%;background:#4ade80;box-shadow:0 0 10px #4ade80;animation:lp-glow-dot 2s ease infinite;}
         @keyframes lp-glow-dot{0%,100%{box-shadow:0 0 5px #4ade80}50%{box-shadow:0 0 16px #4ade80,0 0 32px rgba(74,222,128,.35)}}
@@ -315,7 +329,7 @@ export default function LandingPage() {
         .lp-cta-acts{display:flex;align-items:center;justify-content:center;gap:12px;position:relative;flex-wrap:wrap;z-index:1000 !important;}
 
         /* footer */
-        footer.lp-footer{border-top:1px solid var(--bd);padding:28px 32px;display:flex;align-items:center;justify-content:space-between;max-width:1120px;margin:0 auto;position:relative;z-index:10;flex-wrap:wrap;gap:12px;}
+        .lp-footer{border-top:1px solid var(--bd);padding:28px 32px;display:flex;align-items:center;justify-content:space-between;max-width:1120px;margin:0 auto;position:relative;z-index:10;flex-wrap:wrap;gap:12px;}
         .lp-fcopy{font-size:12.5px;color:var(--t3);}
         .lp-flinks{display:flex;gap:22px;}
         .lp-flinks a{font-size:12.5px;color:var(--t3);text-decoration:none;transition:color .2s;cursor:pointer;}
@@ -347,9 +361,9 @@ export default function LandingPage() {
               <li><a onClick={() => document.getElementById("lp-testimonials")?.scrollIntoView({ behavior: "smooth" })}>Reviews</a></li>
             </ul>
             <div className="lp-nav-r">
-              <a href="http://localhost:3000/dashboard" className="lp-btn lp-btn-p" style={{ padding: "9px 20px", fontSize: "13px", zIndex: 99999, position: "relative" }}>
+              <button onClick={() => signIn("github", { callbackUrl: "/dashboard" })} className="lp-btn lp-btn-p" style={{ padding: "9px 20px", fontSize: "13px", zIndex: 99999, position: "relative" }}>
                 Dashboard ✦
-              </a>
+              </button>
             </div>
           </div>
         </nav>
@@ -366,11 +380,11 @@ export default function LandingPage() {
             <p className="lp-sub">The smartest way to discover open-source issues — AI-matched to your stack, gamified for momentum, and built for developers who actually ship.</p>
             <div className="lp-acts">
               
-              {/* 🚀 DIRECT DASHBOARD LINK (100% CLICKABLE) 🚀 */}
-              <a href="http://localhost:3000/dashboard" className="lp-btn lp-btn-p lp-btn-xl" style={{ zIndex: 99999, position: 'relative', pointerEvents: 'auto', textDecoration: 'none' }}>
+              {/* 🚀 FIXED GITHUB SIGN IN BUTTON 🚀 */}
+              <button onClick={() => signIn("github", { callbackUrl: "/dashboard" })} className="lp-btn lp-btn-p lp-btn-xl" style={{ zIndex: 99999, position: 'relative', pointerEvents: 'auto' }}>
                 <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '8px' }}><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>
-                Go to Dashboard 🚀
-              </a>
+                Continue with GitHub 🚀
+              </button>
 
               <button className="lp-btn lp-btn-g lp-btn-xl" onClick={() => document.getElementById("lp-features")?.scrollIntoView({ behavior: "smooth" })}>See Features ↓</button>
             </div>
@@ -414,7 +428,7 @@ export default function LandingPage() {
                 <div className="lp-swrow">
                   <button className="lp-sbtn s" title="Skip">✕</button>
                   <button className="lp-sbtn a" title="Bookmark">✦</button>
-                  <a href="http://localhost:3000/dashboard" className="lp-sbtn v" title="Save" style={{ textDecoration: 'none', zIndex: 99999, position: 'relative' }}>♥</a>
+                  <button onClick={() => signIn("github", { callbackUrl: "/dashboard" })} className="lp-sbtn v" title="Save" style={{ zIndex: 99999, position: 'relative' }}>♥</button>
                 </div>
               </div>
             </div>
@@ -534,11 +548,11 @@ export default function LandingPage() {
             <h2 className="lp-cta-t">Ready to start<br /><span className="lp-gtext">contributing?</span></h2>
             <p className="lp-cta-s">Join thousands of developers building their open-source portfolio. Free forever.</p>
             <div className="lp-cta-acts">
-              {/* 🚀 DIRECT DASHBOARD LINK IN CTA TOO 🚀 */}
-              <a href="http://localhost:3000/dashboard" className="lp-btn lp-btn-p lp-btn-xl" style={{ zIndex: 99999, position: 'relative', pointerEvents: 'auto', textDecoration: 'none' }}>
+              {/* 🚀 FIXED GITHUB SIGN IN BUTTON IN CTA 🚀 */}
+              <button onClick={() => signIn("github", { callbackUrl: "/dashboard" })} className="lp-btn lp-btn-p lp-btn-xl" style={{ zIndex: 99999, position: 'relative', pointerEvents: 'auto' }}>
                 <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '8px' }}><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>
-                Go to Dashboard 🚀
-              </a>
+                Continue with GitHub 🚀
+              </button>
             </div>
           </div>
         </div>
