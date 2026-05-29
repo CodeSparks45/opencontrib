@@ -11,6 +11,8 @@
 //    with reset time, not a blank page
 //
 // 3. UI: Full premium upgrade matching the landing page design language
+//
+// 4. ANTI-SPAM: 15-second cooldown added to the Scan button to prevent API abuse
 // ──────────────────────────────────────────────────────────────────────────
 
 import { useSession } from "next-auth/react";
@@ -169,6 +171,7 @@ export default function Dashboard() {
   const [rateLimitTime, setRateLimitTime] = useState("");
   const [xp, setXp]                 = useState(650);
   const [streak, setStreak]         = useState(7);
+  const [cooldown, setCooldown]     = useState(0); // ANTI-SPAM STATE ADDED
 
   // ── FIX: Use ref to guard against double-fire without stale closure ──────
   const loadingRef  = useRef(false);
@@ -193,11 +196,7 @@ export default function Dashboard() {
   };
 
   // ── FIX: fetchIssues has NO state deps — uses refs for guards ─────────────
-  // This means the function reference never goes stale between renders.
-  // We read current filter values via closure from state (they're always fresh
-  // because we define this inside the component with all state in scope).
   const fetchIssues = useCallback(async () => {
-    // ── loadingRef prevents double-fire, avoids stale `loading` state ──────
     if (loadingRef.current) return;
     loadingRef.current = true;
     setLoading(true);
@@ -207,7 +206,6 @@ export default function Dashboard() {
     try {
       setScanPhase(scope === "gssoc" ? "Querying GSSoC repositories…" : "Scanning global open-source…");
 
-      // Build query params for our server-side proxy
       const params = new URLSearchParams({
         scope,
         language,
@@ -217,10 +215,15 @@ export default function Dashboard() {
 
       setScanPhase("Fetching fresh issues from GitHub…");
 
-      const res = await fetch(`/api/issues?${params}`);
+      // NextAuth session token extraction logic
+      const headers: Record<string, string> = {};
+      if (session && (session as any).accessToken) {
+        headers["Authorization"] = `Bearer ${(session as any).accessToken}`;
+      }
+
+      const res = await fetch(`/api/issues?${params}`, { headers });
       const data = await res.json();
 
-      // ── FIX: Explicit rate-limit handling — no more silent "0 results" ──
       if (res.status === 429 || data.error === "rate_limit") {
         const reset = data.resetTime || "soon";
         setRateLimitTime(reset);
@@ -261,7 +264,26 @@ export default function Dashboard() {
     setLoading(false);
     loadingRef.current = false;
     setScanPhase("");
-  }, [scope, language, label, searchQuery]); // ← no `loading` in deps!
+  }, [scope, language, label, searchQuery, session]);
+
+  // ── ANTI-SPAM: Handle Manual Scan Click ─────────────────────────────────────
+  const handleManualScan = () => {
+    if (loading || cooldown > 0) return;
+    
+    fetchIssues();
+    
+    // Cooldown setting trigger
+    setCooldown(15);
+    const timer = setInterval(() => {
+      setCooldown((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+  };
 
   // Auto-fetch on first authenticated load
   useEffect(() => {
@@ -308,10 +330,10 @@ export default function Dashboard() {
   );
 
   const tabs: { id:View; label:string; icon:any; badge?:string }[] = [
-    { id:"grid",        label:"Discover",           icon:<Search size={14}/> },
-    { id:"swipe",       label:"Swipe Mode",         icon:<Zap size={14}/>,    badge:"HOT" },
-    { id:"ai",          label:"AI Match",           icon:<Brain size={14}/>,  badge:"AI" },
-    { id:"leaderboard", label:"Leaderboard",        icon:<Trophy size={14}/> },
+    { id:"grid",        label:"Discover",         icon:<Search size={14}/> },
+    { id:"swipe",       label:"Swipe Mode",       icon:<Zap size={14}/>,  badge:"HOT" },
+    { id:"ai",          label:"AI Match",         icon:<Brain size={14}/>,  badge:"AI" },
+    { id:"leaderboard", label:"Leaderboard",      icon:<Trophy size={14}/> },
     { id:"saved",       label:`Saved (${savedIssues.length})`, icon:<Bookmark size={14}/> },
   ];
 
@@ -634,7 +656,7 @@ export default function Dashboard() {
                     <Search size={14}/>
                     <input type="text" value={searchQuery}
                       onChange={e=>setSearchQuery(e.target.value)}
-                      onKeyDown={e=>e.key==="Enter"&&fetchIssues()}
+                      onKeyDown={e=>e.key==="Enter"&&handleManualScan()}
                       placeholder="Search by repo (e.g. facebook/react) or keywords…"
                       className="dash-search-input"/>
                   </div>
@@ -665,9 +687,19 @@ export default function Dashboard() {
                     <option value="help wanted">Help Wanted</option>
                     <option value="beginner">Beginner</option>
                   </select>
-                  <button className="dash-scan-btn" onClick={fetchIssues} disabled={loading}>
+                  
+                  {/* ── ANTI-SPAM BUTTON WITH COOLDOWN DISPLAY ── */}
+                  <button 
+                    className="dash-scan-btn" 
+                    onClick={handleManualScan} 
+                    disabled={loading || cooldown > 0}
+                    style={{
+                      opacity: (loading || cooldown > 0) ? 0.6 : 1,
+                      cursor: (loading || cooldown > 0) ? "not-allowed" : "pointer"
+                    }}
+                  >
                     <RefreshCw size={13} className={loading?"spin-ico":""}/>
-                    {loading?"Scanning…":"Scan Fresh Issues"}
+                    {loading ? "Scanning…" : cooldown > 0 ? `Wait ${cooldown}s` : "Scan Fresh Issues"}
                   </button>
                 </div>
                 {lastScan && !loading && (
@@ -707,7 +739,7 @@ export default function Dashboard() {
             </>
           )}
 
-          {view==="swipe" && <SwipeMode issues={issues} savedIssues={savedIssues} onToggleSave={toggleSave} onFetchMore={fetchIssues} loading={loading}/>}
+          {view==="swipe" && <SwipeMode issues={issues} savedIssues={savedIssues} onToggleSave={toggleSave} onFetchMore={handleManualScan} loading={loading}/>}
           {view==="ai" && <AIMatcher githubUsername={session?.user?.name||""} onIssueSelect={(issue:any)=>{setView("grid");setSearchQuery(issue.repository_url.replace("https://api.github.com/repos/","").split("/")[1]||"");}}/>}
           {view==="leaderboard" && <LeaderboardView username={session?.user?.name||""}/>}
 
