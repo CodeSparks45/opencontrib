@@ -1,5 +1,6 @@
 import "./globals.css";
 import { Providers } from "./Providers";
+import { Analytics } from "@vercel/analytics/react"; // Analytics import add kiya
 
 export const metadata = {
   title: "OpenContrib | GSSoC Issue Finder",
@@ -16,6 +17,9 @@ export default function RootLayout({
       <body>
         {/* Ye Providers ab error ko permanently rok dega */}
         <Providers>{children}</Providers>
+        
+        {/* 🚨 VERCEL ANALYTICS ENGINE 🚨 */}
+        <Analytics />
       </body>
     </html>
   );
