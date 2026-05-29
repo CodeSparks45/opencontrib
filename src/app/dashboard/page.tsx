@@ -1,20 +1,5 @@
 "use client";
 
-// ─── BUGS FIXED IN THIS FILE ───────────────────────────────────────────────
-// 1. ZERO ISSUES BUG: Calls now go through /api/issues (server-side proxy)
-//    - Server-side adds GITHUB_API_TOKEN → 5000 req/hr instead of 60
-//    - Rate limit is detected properly → shows a clear error instead of "0 results"
-//    - `loading` removed from useCallback deps → no stale closure on re-click
-//    - loadingRef guards against double-firing without blocking the button
-//
-// 2. RATE LIMIT FEEDBACK: If GitHub rate-limits us, user sees a clear toast
-//    with reset time, not a blank page
-//
-// 3. UI: Full premium upgrade matching the landing page design language
-//
-// 4. ANTI-SPAM: 15-second cooldown added to the Scan button to prevent API abuse
-// ──────────────────────────────────────────────────────────────────────────
-
 import { useSession } from "next-auth/react";
 import { redirect } from "next/navigation";
 import {
@@ -165,15 +150,14 @@ export default function Dashboard() {
   const [searchQuery, setSearchQuery] = useState("");
   const [language, setLanguage]     = useState("");
   const [label, setLabel]           = useState("good first issue");
-  const [scope, setScope]           = useState("gssoc");
+  const [scope, setScope]           = useState("gssoc"); // "gssoc" | "worldwide" | "ssoc"
   const [view, setView]             = useState<View>("grid");
   const [toast, setToast]           = useState("");
   const [rateLimitTime, setRateLimitTime] = useState("");
   const [xp, setXp]                 = useState(650);
   const [streak, setStreak]         = useState(7);
-  const [cooldown, setCooldown]     = useState(0); // ANTI-SPAM STATE ADDED
+  const [cooldown, setCooldown]     = useState(0); // ANTI-SPAM STATE
 
-  // ── FIX: Use ref to guard against double-fire without stale closure ──────
   const loadingRef  = useRef(false);
   const hasFetched  = useRef(false);
   const toastTimer  = useRef<ReturnType<typeof setTimeout>|null>(null);
@@ -195,9 +179,15 @@ export default function Dashboard() {
     toastTimer.current = setTimeout(() => setToast(""), 4000);
   };
 
-  // ── FIX: fetchIssues has NO state deps — uses refs for guards ─────────────
   const fetchIssues = useCallback(async () => {
     if (loadingRef.current) return;
+    
+    // SSOC Tab UI handler - No API Call needed
+    if (scope === "ssoc") {
+      setIssues([]);
+      return;
+    }
+
     loadingRef.current = true;
     setLoading(true);
     setIssues([]);
@@ -215,7 +205,6 @@ export default function Dashboard() {
 
       setScanPhase("Fetching fresh issues from GitHub…");
 
-      // NextAuth session token extraction logic
       const headers: Record<string, string> = {};
       if (session && (session as any).accessToken) {
         headers["Authorization"] = `Bearer ${(session as any).accessToken}`;
@@ -227,7 +216,7 @@ export default function Dashboard() {
       if (res.status === 429 || data.error === "rate_limit") {
         const reset = data.resetTime || "soon";
         setRateLimitTime(reset);
-        showToast(`⚠️ GitHub rate limit hit. Resets at ${reset}. Add a GITHUB_API_TOKEN for 5,000 req/hr.`);
+        showToast(`⚠️ GitHub rate limit hit. Resets at ${reset}.`);
         setLoading(false);
         loadingRef.current = false;
         setScanPhase("");
@@ -251,9 +240,9 @@ export default function Dashboard() {
       localStorage.setItem("oc_last_scan", now.toISOString());
 
       if (found.length === 0) {
-        showToast("🔍 No fresh issues found for these filters. Try changing language or label.");
+        showToast("🔍 No fresh issues found for these filters.");
       } else {
-        showToast(`✅ Found ${found.length} fresh issues with 0 comments!`);
+        showToast(`✅ Found ${found.length} fresh active issues!`);
       }
 
     } catch (e: any) {
@@ -268,11 +257,11 @@ export default function Dashboard() {
 
   // ── ANTI-SPAM: Handle Manual Scan Click ─────────────────────────────────────
   const handleManualScan = () => {
-    if (loading || cooldown > 0) return;
+    if (loading || cooldown > 0 || scope === "ssoc") return;
     
     fetchIssues();
     
-    // Cooldown setting trigger
+    // Start 15-second cooldown
     setCooldown(15);
     const timer = setInterval(() => {
       setCooldown((prev) => {
@@ -285,7 +274,6 @@ export default function Dashboard() {
     }, 1000);
   };
 
-  // Auto-fetch on first authenticated load
   useEffect(() => {
     if (status === "authenticated" && !hasFetched.current) {
       hasFetched.current = true;
@@ -293,7 +281,6 @@ export default function Dashboard() {
     }
   }, [status]); // eslint-disable-line
 
-  // Re-fetch when scope changes
   useEffect(() => {
     if (status === "authenticated" && hasFetched.current) {
       fetchIssues();
@@ -354,19 +341,27 @@ export default function Dashboard() {
           --r-sm:10px;--r-md:14px;--r-lg:20px;--r-xl:26px;
         }
         body{background:var(--bg);color:var(--t1);font-family:var(--fb);font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden;}
-        body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(0,229,255,.018) 1px,transparent 1px),linear-gradient(90deg,rgba(0,229,255,.018) 1px,transparent 1px);background-size:52px 52px;pointer-events:none;z-index:0;}
-        body::after{content:'';position:fixed;top:-30%;left:50%;transform:translateX(-50%);width:70vw;height:50vh;background:radial-gradient(ellipse,rgba(0,229,255,.05) 0%,transparent 65%);pointer-events:none;z-index:0;}
+        
+        /* 🚨 Z-INDEX AND CLICK UNBLOCKING FIXES 🚨 */
+        body::before, body::after, canvas, .lp-orb { pointer-events: none !important; z-index: 0 !important; }
+        .dash-topbar { position: sticky !important; top: 0; z-index: 999999 !important; pointer-events: auto !important; }
+        .dash-scan-bar, .dash-welcome, .dash-xp-bar-wrap, .dash-stats-grid, .dash-promo-grid { position: relative !important; z-index: 5000 !important; pointer-events: auto !important; }
+        .dash-scan-btn, .dash-tab, .dash-icon-btn, .dash-select, .dash-search-input, button, a { position: relative !important; z-index: 9999999 !important; pointer-events: auto !important; cursor: pointer !important; }
+        .dash-issue-grid, .dash-section { position: relative !important; z-index: 10 !important; }
+
+        body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(0,229,255,.018) 1px,transparent 1px),linear-gradient(90deg,rgba(0,229,255,.018) 1px,transparent 1px);background-size:52px 52px;pointer-events:none;}
+        body::after{content:'';position:fixed;top:-30%;left:50%;transform:translateX(-50%);width:70vw;height:50vh;background:radial-gradient(ellipse,rgba(0,229,255,.05) 0%,transparent 65%);pointer-events:none;}
         .dash-root{position:relative;z-index:1;min-height:100vh;padding:0 0 80px;}
 
         /* ── TOPBAR ── */
-        .dash-topbar{position:sticky;top:0;z-index:100;backdrop-filter:blur(24px);background:rgba(5,8,16,.85);border-bottom:1px solid rgba(255,255,255,.06);}
+        .dash-topbar{backdrop-filter:blur(24px);background:rgba(5,8,16,.85);border-bottom:1px solid rgba(255,255,255,.06);}
         .dash-topbar-inner{max-width:1280px;margin:0 auto;display:flex;align-items:center;gap:12px;height:60px;padding:0 24px;}
         .dash-logo{display:flex;align-items:center;gap:8px;font-family:var(--fd);font-size:16px;font-weight:700;color:var(--t1);text-decoration:none;flex-shrink:0;}
         .dash-logo-dot{width:8px;height:8px;border-radius:50%;background:var(--cyan);box-shadow:0 0 10px var(--cyan);animation:dash-glow 2s ease infinite;}
         @keyframes dash-glow{0%,100%{box-shadow:0 0 6px var(--cyan)}50%{box-shadow:0 0 18px var(--cyan),0 0 36px rgba(0,229,255,.3)}}
         .dash-topbar-tabs{display:flex;gap:2px;flex:1;overflow-x:auto;scrollbar-width:none;}
         .dash-topbar-tabs::-webkit-scrollbar{display:none;}
-        .dash-tab{display:flex;align-items:center;gap:6px;padding:6px 14px;border-radius:var(--r-md);font-size:12.5px;font-weight:600;color:var(--t2);cursor:pointer;border:1px solid transparent;white-space:nowrap;transition:all .2s;background:transparent;}
+        .dash-tab{display:flex;align-items:center;gap:6px;padding:6px 14px;border-radius:var(--r-md);font-size:12.5px;font-weight:600;color:var(--t2);border:1px solid transparent;white-space:nowrap;transition:all .2s;background:transparent;}
         .dash-tab:hover{color:var(--t1);background:rgba(255,255,255,.04);}
         .dash-tab.active{background:rgba(0,229,255,.08);border-color:var(--bdh);color:var(--cyan);}
         .dash-tab-badge{font-size:9px;font-weight:700;padding:2px 6px;border-radius:99px;background:#e11d48;color:#fff;}
@@ -429,6 +424,8 @@ export default function Dashboard() {
         .dash-scope-toggle{display:flex;background:rgba(255,255,255,.04);border:1px solid var(--bd);border-radius:var(--r-md);overflow:hidden;flex-shrink:0;}
         .dash-scope-btn{padding:9px 16px;font-size:12.5px;font-weight:600;cursor:pointer;border:none;background:transparent;color:var(--t2);transition:all .2s;white-space:nowrap;}
         .dash-scope-btn.active{background:rgba(0,229,255,.12);color:var(--cyan);}
+        .dash-scope-btn.ssoc{color:#fb923c;}
+        .dash-scope-btn.ssoc.active{background:rgba(251,146,60,.12);color:#fb923c;}
         .dash-filters-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
         .dash-select{background:rgba(255,255,255,.04);border:1px solid var(--bd);border-radius:var(--r-md);padding:9px 14px;color:var(--t1);font-family:var(--fb);font-size:13px;outline:none;cursor:pointer;transition:border-color .2s;}
         .dash-select:focus{border-color:var(--bdh);}
@@ -663,6 +660,8 @@ export default function Dashboard() {
                   <div className="dash-scope-toggle">
                     <button className={`dash-scope-btn ${scope==="gssoc"?"active":""}`} onClick={()=>setScope("gssoc")}>🎯 GSSoC</button>
                     <button className={`dash-scope-btn ${scope==="worldwide"?"active":""}`} onClick={()=>setScope("worldwide")}>🌍 Worldwide</button>
+                    {/* 🚨 NEW SSOC TAB 🚨 */}
+                    <button className={`dash-scope-btn ${scope==="ssoc"?"active":""}`} style={{color: scope==="ssoc"?"#fb923c":"var(--t2)"}} onClick={()=>setScope("ssoc")}>🚀 SSOC</button>
                   </div>
                 </div>
                 <div className="dash-filters-row">
@@ -692,17 +691,17 @@ export default function Dashboard() {
                   <button 
                     className="dash-scan-btn" 
                     onClick={handleManualScan} 
-                    disabled={loading || cooldown > 0}
+                    disabled={loading || cooldown > 0 || scope === "ssoc"}
                     style={{
-                      opacity: (loading || cooldown > 0) ? 0.6 : 1,
-                      cursor: (loading || cooldown > 0) ? "not-allowed" : "pointer"
+                      opacity: (loading || cooldown > 0 || scope === "ssoc") ? 0.6 : 1,
+                      cursor: (loading || cooldown > 0 || scope === "ssoc") ? "not-allowed" : "pointer"
                     }}
                   >
                     <RefreshCw size={13} className={loading?"spin-ico":""}/>
                     {loading ? "Scanning…" : cooldown > 0 ? `Wait ${cooldown}s` : "Scan Fresh Issues"}
                   </button>
                 </div>
-                {lastScan && !loading && (
+                {lastScan && !loading && scope !== "ssoc" && (
                   <div className="dash-last-scan">
                     <div className="dash-last-scan-dot"/>
                     Last scan: {lastScan.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})} · {issues.length} zero-comment issues found
@@ -714,15 +713,23 @@ export default function Dashboard() {
               <div className="dash-section">
                 <div className="dash-section-head">
                   <GitPullRequest size={15} className="dash-accent-icon"/>
-                  Fresh Issues — 0 comments · unassigned
+                  48-Hour Active Contributions Feed
                   <span className="dash-section-badge">{loading?"Scanning…":`${issues.length} results`}</span>
                 </div>
-                {loading ? (
+                
+                {/* 🚨 SSOC COMING SOON RENDER 🚨 */}
+                {scope === "ssoc" ? (
+                  <div className="dash-empty">
+                    <div className="dash-empty-icon">⏳</div>
+                    <p style={{ fontSize: "18px", fontWeight: "bold", color: "#fb923c", marginBottom: "8px" }}>SSOC is Coming Soon!</p>
+                    <p>We are actively integrating Social Summer of Code (SSOC) repositories.<br/>Stay tuned for the launch!</p>
+                  </div>
+                ) : loading ? (
                   <div className="dash-issue-grid">{[...Array(9)].map((_,i)=><SkeletonCard key={i}/>)}</div>
-                ) : issues.length===0 ? (
+                ) : issues.length === 0 ? (
                   <div className="dash-empty">
                     <div className="dash-empty-icon">🔍</div>
-                    <p>No fresh issues found for these filters.<br/>Try changing the language, label, or switching scope.<br/><br/>If you see this repeatedly, you may have hit the GitHub rate limit — check the banner above.</p>
+                    <p>No 48-hour fresh issues found right now.<br/>Try changing the language, label, or checking Worldwide mode.</p>
                   </div>
                 ) : (
                   <div className="dash-issue-grid">
