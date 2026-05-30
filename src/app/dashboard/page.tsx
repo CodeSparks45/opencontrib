@@ -33,7 +33,6 @@ function getAge(iso: string) {
   return { text: `${Math.floor(d / 7)}w ago`, hot: false };
 }
 
-// ─── Note Modal ───────────────────────────────────────────────────────────────
 function NoteModal({ issue, note, onSave, onClose }: { issue:any; note:string; onSave:(n:string)=>void; onClose:()=>void }) {
   const [text, setText] = useState(note);
   return (
@@ -53,7 +52,6 @@ function NoteModal({ issue, note, onSave, onClose }: { issue:any; note:string; o
   );
 }
 
-// ─── Skeleton Card ────────────────────────────────────────────────────────────
 function SkeletonCard() {
   return (
     <div className="dash-issue-card" style={{ pointerEvents:"none" }}>
@@ -64,7 +62,6 @@ function SkeletonCard() {
   );
 }
 
-// ─── Issue Card ───────────────────────────────────────────────────────────────
 function IssueCard({ issue, saved, note, onSave, onNote }: any) {
   const repo = issue.repository_url.replace("https://api.github.com/repos/","");
   const diff = getDifficulty(issue.labels);
@@ -119,7 +116,6 @@ function LeaderboardView({ username }: { username:string }) {
   );
 }
 
-// ─── Dashboard ────────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const { data: session, status } = useSession({
     required: true,
@@ -135,7 +131,7 @@ export default function Dashboard() {
   const [noteTarget, setNoteTarget] = useState<any>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [language, setLanguage]     = useState("");
-  const [label, setLabel]           = useState("good first issue");
+  const [label, setLabel]           = useState(""); 
   const [scope, setScope]           = useState("gssoc"); 
   const [view, setView]             = useState<View>("grid");
   const [toast, setToast]           = useState("");
@@ -148,8 +144,20 @@ export default function Dashboard() {
   const toastTimer  = useRef<ReturnType<typeof setTimeout>|null>(null);
   const xpToNext    = 1000;
 
+  const scanMessages = [
+    "Initializing Sniper Mode...",
+    "Scanning 397+ repositories...",
+    "Bypassing assigned issues...",
+    "Extracting zero-comment targets...",
+    "Decrypting final list...",
+  ];
+
   useEffect(() => {
     try {
+      // 🔥 AUTO-NUKE OLD SPAM CACHE FOR ALL USERS 🔥
+      localStorage.removeItem("oc_cached_issues_gssoc");
+      localStorage.removeItem("oc_cached_issues_worldwide");
+
       const sv = localStorage.getItem("oc_saved"); if (sv) setSavedIssues(JSON.parse(sv));
       const nt = localStorage.getItem("oc_notes"); if (nt) setNotes(JSON.parse(nt));
       const x  = localStorage.getItem("oc_xp");   if (x)  setXp(parseInt(x));
@@ -176,9 +184,16 @@ export default function Dashboard() {
     setLoading(true);
     setIssues([]);
 
-    try {
-      setScanPhase(scope === "gssoc" ? "Querying GSSoC repositories…" : "Scanning global open-source…");
+    let msgIndex = 0;
+    setScanPhase(scanMessages[0]);
+    const msgInterval = setInterval(() => {
+      msgIndex++;
+      if (msgIndex < scanMessages.length) {
+        setScanPhase(scanMessages[msgIndex]);
+      }
+    }, 600);
 
+    try {
       const params = new URLSearchParams({
         scope,
         language,
@@ -186,25 +201,27 @@ export default function Dashboard() {
         query: searchQuery,
       });
 
-      setScanPhase("Fetching fresh issues from GitHub…");
-
       const headers: Record<string, string> = {};
       if (session && (session as any).accessToken) {
         headers["Authorization"] = `Bearer ${(session as any).accessToken}`;
       }
 
-      const res = await fetch(`/api/issues?${params}`, { headers });
+      const [res, _] = await Promise.all([
+        fetch(`/api/issues?${params}`, { headers }),
+        new Promise(r => setTimeout(r, 2500)) 
+      ]);
+      
+      clearInterval(msgInterval);
       const data = await res.json();
 
-      // 🚨 SILENT CACHE FALLBACK LOGIC 🚨
       if (res.status === 429 || data.error === "rate_limit" || data.error) {
-        const cachedStr = localStorage.getItem(`oc_cached_issues_${scope}`);
+        const cachedStr = localStorage.getItem(`oc_feed_v2_${scope}`); 
         if (cachedStr) {
           const cachedIssues = JSON.parse(cachedStr);
           setIssues(cachedIssues);
           showToast(`🔥 High traffic! Showing recently active issues for you.`);
         } else {
-          showToast(`⚠️ Too many requests right now. Please check back in a few minutes.`);
+          showToast(`⚠️ Radar cooling down. Please check back shortly.`);
         }
         setLoading(false);
         loadingRef.current = false;
@@ -216,9 +233,8 @@ export default function Dashboard() {
       setScanPhase("Done!");
       setIssues(found);
 
-      // Save successful fetch to cache for silent fallback later
       if (found.length > 0) {
-        localStorage.setItem(`oc_cached_issues_${scope}`, JSON.stringify(found));
+        localStorage.setItem(`oc_feed_v2_${scope}`, JSON.stringify(found));
       }
 
       const now = new Date();
@@ -226,15 +242,15 @@ export default function Dashboard() {
       localStorage.setItem("oc_last_scan", now.toISOString());
 
       if (found.length === 0) {
-        showToast("🔍 No fresh issues found for these filters.");
+        showToast("🔍 No exact matches found for these filters. Try broader search.");
       } else {
-        showToast(`✅ Found ${found.length} fresh active issues!`);
+        showToast(`✅ Loaded ${found.length} active 0-comment issues!`);
       }
 
     } catch (e: any) {
+      clearInterval(msgInterval);
       console.error("[fetchIssues]", e);
-      // Network error silent fallback
-      const cachedStr = localStorage.getItem(`oc_cached_issues_${scope}`);
+      const cachedStr = localStorage.getItem(`oc_feed_v2_${scope}`); 
       if (cachedStr) {
         setIssues(JSON.parse(cachedStr));
         showToast("⚠️ Network issue. Loaded cached issues.");
@@ -250,7 +266,6 @@ export default function Dashboard() {
 
   const handleManualScan = () => {
     if (loading || cooldown > 0 || scope === "ssoc") return;
-    
     fetchIssues();
     
     setCooldown(15);
@@ -340,7 +355,10 @@ export default function Dashboard() {
         .dash-issue-grid, .dash-section { position: relative !important; z-index: 10 !important; }
 
         body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(0,229,255,.018) 1px,transparent 1px),linear-gradient(90deg,rgba(0,229,255,.018) 1px,transparent 1px);background-size:52px 52px;pointer-events:none;}
+        
+        /* 🚨 THE CSS FIX IS HERE 🚨 */
         body::after{content:'';position:fixed;top:-30%;left:50%;transform:translateX(-50%);width:70vw;height:50vh;background:radial-gradient(ellipse,rgba(0,229,255,.05) 0%,transparent 65%);pointer-events:none;}
+        
         .dash-root{position:relative;z-index:1;min-height:100vh;padding:0 0 80px;}
 
         /* ── TOPBAR ── */
@@ -425,12 +443,12 @@ export default function Dashboard() {
         .dash-last-scan{font-size:11px;color:var(--t3);margin-top:10px;display:flex;align-items:center;gap:6px;}
         .dash-last-scan-dot{width:5px;height:5px;border-radius:50%;background:#4ade80;box-shadow:0 0 6px #4ade80;}
 
-        /* ── SCAN OVERLAY ── */
-        .dash-scan-overlay{position:fixed;inset:0;background:rgba(5,8,16,.88);backdrop-filter:blur(16px);z-index:200;display:flex;align-items:center;justify-content:center;}
+        /* ── SCAN OVERLAY (Hacker UX) ── */
+        .dash-scan-overlay{position:fixed;inset:0;background:rgba(5,8,16,.92);backdrop-filter:blur(16px);z-index:200;display:flex;align-items:center;justify-content:center;}
         .dash-scan-box{text-align:center;padding:40px;}
-        .dash-scan-ring{width:64px;height:64px;border:3px solid rgba(0,229,255,.12);border-top-color:var(--cyan);border-radius:50%;animation:dash-spin-ico .8s linear infinite;margin:0 auto 20px;}
-        .dash-scan-title{font-family:var(--fd);font-size:22px;font-weight:800;color:var(--t1);margin-bottom:8px;}
-        .dash-scan-phase{font-size:13px;color:var(--t2);font-family:var(--fm);}
+        .dash-scan-ring{width:72px;height:72px;border:3px solid rgba(0,229,255,.12);border-top-color:var(--cyan);border-radius:50%;animation:dash-spin-ico .8s linear infinite;margin:0 auto 24px;}
+        .dash-scan-title{font-family:var(--fd);font-size:24px;font-weight:800;color:var(--t1);margin-bottom:12px;letter-spacing:0.02em;}
+        .dash-scan-phase{font-size:14px;color:var(--green);font-family:var(--fm);letter-spacing:0.05em;}
 
         /* ── SECTION ── */
         .dash-section{background:var(--bg1);border:1px solid var(--bd);border-radius:var(--r-xl);padding:20px;margin-bottom:20px;}
@@ -531,12 +549,12 @@ export default function Dashboard() {
       `}} />
 
       <div className="dash-root">
-        {/* Scan overlay */}
+        {/* Hacker Scan overlay */}
         {loading && scanPhase && (
           <div className="dash-scan-overlay">
             <div className="dash-scan-box">
               <div className="dash-scan-ring"/>
-              <div className="dash-scan-title">Scanning GitHub</div>
+              <div className="dash-scan-title">Sniper Radar Active</div>
               <div className="dash-scan-phase">{scanPhase}</div>
             </div>
           </div>

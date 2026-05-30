@@ -1,157 +1,224 @@
 import { NextRequest, NextResponse } from "next/server";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "../auth/[...nextauth]/route";
 
-export async function POST(req: NextRequest) {
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+// ─── All GSSoC label variants we know about ──────────────────────────────────
+const GSSOC_LABELS = [
+  `label:gssoc`,
+  `label:"gssoc'26"`,
+  `label:gssoc-2026`,
+  `label:"GSSoC 2026"`,
+  `label:gssoc-ext`,
+  `label:"GSSoC-Ext"`,
+  `label:"GSSoC-Extended"`,
+  `label:gssoc26`,
+];
+
+// ─── Build request headers ────────────────────────────────────────────────────
+function ghHeaders(token: string): Record<string, string> {
+  const h: Record<string, string> = {
+    Accept: "application/vnd.github+json",
+    "X-GitHub-Api-Version": "2022-11-28",
+    "Cache-Control": "no-store, no-cache, must-revalidate",
+    Pragma: "no-cache",
+  };
+  if (token) h["Authorization"] = `Bearer ${token}`;
+  return h;
+}
+
+// ─── Single GitHub search call ────────────────────────────────────────────────
+async function ghSearch(q: string, sort: string, page: number, token: string): Promise<any[]> {
+  const url =
+    `https://api.github.com/search/issues` +
+    `?q=${encodeURIComponent(q)}` +
+    `&sort=${sort}` +
+    `&order=desc` +
+    `&per_page=100` + // Fetching 100 for deep dive
+    `&page=${page}` +
+    `&_=${Date.now()}`; // cache-buster
+
+  const res = await fetch(url, {
+    headers: ghHeaders(token),
+    cache: "no-store",
+  });
+
+  if (res.status === 403 || res.status === 429) {
+    const reset = res.headers.get("X-RateLimit-Reset");
+    const t = reset ? new Date(parseInt(reset) * 1000).toLocaleTimeString() : "soon";
+    throw new Error(`RATE_LIMIT:${t}`);
+  }
+  if (!res.ok) throw new Error(`GITHUB_ERROR:${res.status}`);
+
+  const data = await res.json();
+  if (data.message && !data.items) {
+    if (data.message.toLowerCase().includes("rate limit")) throw new Error("RATE_LIMIT:soon");
+    throw new Error(`GITHUB_MSG:${data.message}`);
+  }
+  return (data.items || []) as any[];
+}
+
+// ─── Main handler ─────────────────────────────────────────────────────────────
+export async function GET(req: NextRequest) {
   try {
-    const { techStack, experience, interests, githubUsername, scope } = await req.json();
+    // Token resolution: client header → session → env fallback
+    const authHeader = req.headers.get("authorization");
+    const clientToken = authHeader?.startsWith("Bearer ") ? authHeader.split(" ")[1] : null;
+    const session = await getServerSession(authOptions);
+    const userToken = (session as any)?.accessToken;
+    const GH_TOKEN = clientToken || userToken || process.env.GITHUB_API_TOKEN || "";
 
-    if (!techStack) {
-      return NextResponse.json({ error: "techStack is required" }, { status: 400 });
+    const { searchParams } = new URL(req.url);
+    const scope    = searchParams.get("scope")    || "gssoc";
+    const language = searchParams.get("language") || "";
+    const label    = searchParams.get("label")    || "";
+    const query    = searchParams.get("query")    || "";
+
+    // SSOC — not integrated yet
+    if (scope === "ssoc") {
+      return NextResponse.json({ issues: [], total: 0 });
     }
 
-    // 1. Fetch some real GitHub issues to give Claude context
-    const labels = experience === "beginner" ? "good first issue" : "help wanted";
-    const langMap: Record<string, string> = {
-      react: "javascript",
-      typescript: "typescript",
-      python: "python",
-      java: "java",
-      go: "go",
-      rust: "rust",
-      "c++": "cpp",
+    // ── Dedup set ────────────────────────────────────────────────────────────
+    const seen = new Set<number>();
+    const all: any[] = [];
+    
+    // Max 3 issues per repository to stop other spammers
+    const repoCounts = new Map<string, number>();
+    const MAX_PER_REPO = 3;
+
+    const addIssues = (items: any[]) => {
+      for (const issue of items) {
+        // Only unassigned, non-PR items
+        if (!seen.has(issue.id) && !issue.assignee && !issue.pull_request) {
+          
+          const repoUrl = issue.repository_url;
+          const currentCount = repoCounts.get(repoUrl) || 0;
+
+          if (currentCount < MAX_PER_REPO) {
+            seen.add(issue.id);
+            all.push(issue);
+            repoCounts.set(repoUrl, currentCount + 1);
+          }
+        }
+      }
     };
 
-    const primaryLang = techStack
-      .toLowerCase()
-      .split(/[,\s]+/)
-      .map((t: string) => t.trim())
-      .map((t: string) => langMap[t])
-      .find(Boolean) || "";
+    // ── Build suffix shared across queries ───────────────────────────────────
+    
+    // 🚨 THE ULTIMATE SPAMMER BAN HAMMER 🚨
+    // Agar koi aur pareshan kare, toh usko is list mein daal dena.
+    const BANNED_USERS = ["JhaSourav07"]; 
+    
+    // Github will completely ignore these users' issues!
+    let suffix = " " + BANNED_USERS.map(u => `-user:${u}`).join(" ");
 
-    // DYNAMIC SCOPE LOGIC HERE
-    let q = `is:issue is:open no:assignee label:"${labels}"`;
-    if (scope === "gssoc") q += ` label:gssoc`;
-    if (primaryLang) q += ` language:${primaryLang}`;
+    if (language) suffix += ` language:${language}`;
+    if (query)    suffix += ` ${query}`;
 
-    const githubRes = await fetch(
-      `https://api.github.com/search/issues?q=${encodeURIComponent(q)}&sort=updated&order=desc&per_page=20`,
+    // ── Strategy: rotate page based on time so each scan gets different slice ─
+    // Every 30 seconds → different page (1, 2, or 3) so results rotate
+    const rotatingPage = (Math.floor(Date.now() / 30000) % 3) + 1;
+
+    if (scope === "gssoc") {
+      // ── Strategy 1: Run ALL gssoc label variants with "updated" sort ────────
+      const updatedQueries = GSSOC_LABELS.map((lbl) => {
+        const q = `is:issue is:open no:assignee comments:0 ${lbl}${suffix}`; 
+        return ghSearch(q, "updated", 1, GH_TOKEN);
+      });
+
+      // ── Strategy 2: Same variants but "created" sort, rotating page ──────────
+      const createdQueries = GSSOC_LABELS.slice(0, 4).map((lbl) => {
+        const q = `is:issue is:open no:assignee comments:0 ${lbl}${suffix}`; 
+        return ghSearch(q, "created", rotatingPage, GH_TOKEN);
+      });
+
+      // ── Strategy 3: With specific label filter if user selected one ──────────
+      const labelQueries = label
+        ? GSSOC_LABELS.slice(0, 3).map((lbl) => {
+            const q = `is:issue is:open no:assignee comments:0 ${lbl} label:"${label}"${suffix}`; 
+            return ghSearch(q, "updated", 1, GH_TOKEN);
+          })
+        : [];
+
+      // Run all in parallel, ignore individual failures
+      const allResults = await Promise.allSettled([
+        ...updatedQueries,
+        ...createdQueries,
+        ...labelQueries,
+      ]);
+
+      allResults.forEach((r) => {
+        if (r.status === "fulfilled") addIssues(r.value);
+      });
+
+      // ── Fallback: if GSSoC queries return nothing, widen search ─────────────
+      if (all.length === 0) {
+        const fallbackQ = `is:issue is:open no:assignee comments:0 label:"good first issue"${suffix}`; 
+        const fb = await ghSearch(fallbackQ, "updated", 1, GH_TOKEN).catch(() => []);
+        addIssues(fb);
+      }
+
+    } else {
+      // ── Worldwide scope ──────────────────────────────────────────────────────
+      const effectiveLabel = label || "good first issue";
+
+      // Run parallel queries with different sorts + rotating page for variety
+      const wwQueries = [
+        ghSearch(
+          `is:issue is:open no:assignee comments:0 label:"${effectiveLabel}"${suffix}`,
+          "updated",
+          1,
+          GH_TOKEN
+        ),
+        ghSearch(
+          `is:issue is:open no:assignee comments:0 label:"${effectiveLabel}"${suffix}`,
+          "created",
+          rotatingPage,
+          GH_TOKEN
+        ),
+      ];
+
+      const wwResults = await Promise.allSettled(wwQueries);
+      wwResults.forEach((r) => {
+        if (r.status === "fulfilled") addIssues(r.value);
+      });
+    }
+
+    // ── Sort: mix updated + created so feed feels alive ──────────────────────
+    all.sort(
+      (a, b) =>
+        new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()
+    );
+
+    // ── Return up to 60 issues ────────────────────────────────────────────────
+    const final = all.slice(0, 60);
+
+    return NextResponse.json(
+      { issues: final, total: final.length },
       {
         headers: {
-          Accept: "application/vnd.github.v3+json",
-          "User-Agent": "gssoc-issue-finder",
+          "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+          Pragma: "no-cache",
+          Expires: "0",
         },
       }
     );
 
-    const githubData = await githubRes.json();
-    const issues = (githubData.items || []).slice(0, 15);
-
-    if (issues.length === 0) {
-      return NextResponse.json({ suggestions: [] });
+  } catch (err: any) {
+    const msg: string = err?.message || "";
+    if (msg.startsWith("RATE_LIMIT")) {
+      const resetTime = msg.split(":")[1] || "soon";
+      return NextResponse.json(
+        { error: "rate_limit", resetTime, issues: [] },
+        { status: 429 }
+      );
     }
-
-    // 2. Format issues for Claude
-    const issueList = issues
-      .map(
-        (issue: any, idx: number) =>
-          `${idx + 1}. REPO: ${issue.repository_url.replace("https://api.github.com/repos/", "")}
-   TITLE: ${issue.title}
-   URL: ${issue.html_url}
-   LABELS: ${issue.labels.map((l: any) => l.name).join(", ") || "none"}
-   COMMENTS: ${issue.comments}
-   BODY_SNIPPET: ${(issue.body || "").slice(0, 200)}`
-      )
-      .join("\n\n");
-
-    // 3. Call Claude API
-    const claudeRes = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": process.env.ANTHROPIC_API_KEY || "",
-        "anthropic-version": "2023-06-01",
-      },
-      body: JSON.stringify({
-        model: "claude-sonnet-4-20250514",
-        max_tokens: 1000,
-        system: `You are an expert open-source contribution advisor for student developers. 
-Analyze GitHub issues and match them to a developer's profile.
-You MUST respond with ONLY valid JSON — no preamble, no markdown, no explanation.
-Return exactly this structure:
-{
-  "suggestions": [
-    {
-      "repoName": "owner/repo",
-      "issueTitle": "exact issue title",
-      "issueUrl": "https://github.com/...",
-      "reason": "2-3 sentences explaining why this matches the developer",
-      "matchScore": 85,
-      "difficulty": "Beginner",
-      "skills": ["React", "TypeScript"]
-    }
-  ]
-}
-Return 3-5 suggestions, ordered by match quality. difficulty must be one of: Beginner, Intermediate, Hard.`,
-        messages: [
-          {
-            role: "user",
-            content: `Developer Profile:
-- Tech Stack: ${techStack}
-- Experience Level: ${experience}
-- Interests: ${interests || "general open source"}
-- GitHub Username: ${githubUsername || "unknown"}
-
-Available GitHub Issues:
-${issueList}
-
-Pick the 3-5 best matching issues for this developer. Consider their tech stack, experience level, and interests. Give a matchScore from 50-100.`,
-          },
-        ],
-      }),
-    });
-
-    if (!claudeRes.ok) {
-      const errText = await claudeRes.text();
-      console.error("Claude API error:", errText);
-      // Fallback: return top 3 issues without AI ranking
-      const fallback = issues.slice(0, 3).map((issue: any) => ({
-        repoName: issue.repository_url.replace("https://api.github.com/repos/", ""),
-        issueTitle: issue.title,
-        issueUrl: issue.html_url,
-        reason: "This issue matches your experience level and has the right labels for contribution.",
-        matchScore: 70,
-        difficulty: "Beginner",
-        skills: techStack.split(",").map((s: string) => s.trim()).slice(0, 3),
-      }));
-      return NextResponse.json({ suggestions: fallback });
-    }
-
-    const claudeData = await claudeRes.json();
-    const rawText = claudeData.content
-      ?.filter((b: any) => b.type === "text")
-      .map((b: any) => b.text)
-      .join("");
-
-    // Parse JSON safely
-    let parsed;
-    try {
-      // Strip any potential markdown fences
-      const clean = rawText.replace(/```json|```/g, "").trim();
-      parsed = JSON.parse(clean);
-    } catch {
-      // Try to find JSON in the response
-      const jsonMatch = rawText.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        parsed = JSON.parse(jsonMatch[0]);
-      } else {
-        throw new Error("Could not parse Claude response");
-      }
-    }
-
-    return NextResponse.json({ suggestions: parsed.suggestions || [] });
-  } catch (error) {
-    console.error("AI match error:", error);
+    console.error("[/api/issues]", err);
     return NextResponse.json(
-      { error: "Failed to get AI recommendations" },
+      { error: "fetch_failed", message: msg, issues: [] },
       { status: 500 }
     );
   }
