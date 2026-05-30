@@ -119,20 +119,6 @@ function LeaderboardView({ username }: { username:string }) {
   );
 }
 
-// ─── Rate Limit Banner ────────────────────────────────────────────────────────
-function RateLimitBanner({ resetTime, onDismiss }: { resetTime:string; onDismiss:()=>void }) {
-  return (
-    <div className="dash-rl-banner">
-      <AlertCircle size={16} color="#fb923c"/>
-      <div className="dash-rl-body">
-        <strong>GitHub API rate limit reached.</strong> Resets at <span style={{ color:"#fb923c" }}>{resetTime}</span>.
-        <br/><span style={{ fontSize:"11px", color:"var(--t3)" }}>Add <code style={{ color:"var(--cyan)" }}>GITHUB_API_TOKEN</code> to your .env.local to get 5,000 requests/hr instead of 60.</span>
-      </div>
-      <button className="dash-icon-btn" onClick={onDismiss}><X size={13}/></button>
-    </div>
-  );
-}
-
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const { data: session, status } = useSession({
@@ -150,13 +136,12 @@ export default function Dashboard() {
   const [searchQuery, setSearchQuery] = useState("");
   const [language, setLanguage]     = useState("");
   const [label, setLabel]           = useState("good first issue");
-  const [scope, setScope]           = useState("gssoc"); // "gssoc" | "worldwide" | "ssoc"
+  const [scope, setScope]           = useState("gssoc"); 
   const [view, setView]             = useState<View>("grid");
   const [toast, setToast]           = useState("");
-  const [rateLimitTime, setRateLimitTime] = useState("");
   const [xp, setXp]                 = useState(650);
   const [streak, setStreak]         = useState(7);
-  const [cooldown, setCooldown]     = useState(0); // ANTI-SPAM STATE
+  const [cooldown, setCooldown]     = useState(0); 
 
   const loadingRef  = useRef(false);
   const hasFetched  = useRef(false);
@@ -182,7 +167,6 @@ export default function Dashboard() {
   const fetchIssues = useCallback(async () => {
     if (loadingRef.current) return;
     
-    // SSOC Tab UI handler - No API Call needed
     if (scope === "ssoc") {
       setIssues([]);
       return;
@@ -191,7 +175,6 @@ export default function Dashboard() {
     loadingRef.current = true;
     setLoading(true);
     setIssues([]);
-    setRateLimitTime("");
 
     try {
       setScanPhase(scope === "gssoc" ? "Querying GSSoC repositories…" : "Scanning global open-source…");
@@ -213,18 +196,16 @@ export default function Dashboard() {
       const res = await fetch(`/api/issues?${params}`, { headers });
       const data = await res.json();
 
-      if (res.status === 429 || data.error === "rate_limit") {
-        const reset = data.resetTime || "soon";
-        setRateLimitTime(reset);
-        showToast(`⚠️ GitHub rate limit hit. Resets at ${reset}.`);
-        setLoading(false);
-        loadingRef.current = false;
-        setScanPhase("");
-        return;
-      }
-
-      if (data.error) {
-        showToast(`⚠️ Error: ${data.message || data.error}`);
+      // 🚨 SILENT CACHE FALLBACK LOGIC 🚨
+      if (res.status === 429 || data.error === "rate_limit" || data.error) {
+        const cachedStr = localStorage.getItem(`oc_cached_issues_${scope}`);
+        if (cachedStr) {
+          const cachedIssues = JSON.parse(cachedStr);
+          setIssues(cachedIssues);
+          showToast(`🔥 High traffic! Showing recently active issues for you.`);
+        } else {
+          showToast(`⚠️ Too many requests right now. Please check back in a few minutes.`);
+        }
         setLoading(false);
         loadingRef.current = false;
         setScanPhase("");
@@ -234,6 +215,11 @@ export default function Dashboard() {
       const found: any[] = data.issues || [];
       setScanPhase("Done!");
       setIssues(found);
+
+      // Save successful fetch to cache for silent fallback later
+      if (found.length > 0) {
+        localStorage.setItem(`oc_cached_issues_${scope}`, JSON.stringify(found));
+      }
 
       const now = new Date();
       setLastScan(now);
@@ -247,7 +233,14 @@ export default function Dashboard() {
 
     } catch (e: any) {
       console.error("[fetchIssues]", e);
-      showToast("⚠️ Network error. Please check your connection and try again.");
+      // Network error silent fallback
+      const cachedStr = localStorage.getItem(`oc_cached_issues_${scope}`);
+      if (cachedStr) {
+        setIssues(JSON.parse(cachedStr));
+        showToast("⚠️ Network issue. Loaded cached issues.");
+      } else {
+        showToast("⚠️ Network error. Please check your connection.");
+      }
     }
 
     setLoading(false);
@@ -255,13 +248,11 @@ export default function Dashboard() {
     setScanPhase("");
   }, [scope, language, label, searchQuery, session]);
 
-  // ── ANTI-SPAM: Handle Manual Scan Click ─────────────────────────────────────
   const handleManualScan = () => {
     if (loading || cooldown > 0 || scope === "ssoc") return;
     
     fetchIssues();
     
-    // Start 15-second cooldown
     setCooldown(15);
     const timer = setInterval(() => {
       setCooldown((prev) => {
@@ -279,13 +270,13 @@ export default function Dashboard() {
       hasFetched.current = true;
       fetchIssues();
     }
-  }, [status]); // eslint-disable-line
+  }, [status]); 
 
   useEffect(() => {
     if (status === "authenticated" && hasFetched.current) {
       fetchIssues();
     }
-  }, [scope]); // eslint-disable-line
+  }, [scope]); 
 
   const toggleSave = (e: React.MouseEvent | { preventDefault:()=>void }, issue: any) => {
     e.preventDefault();
@@ -342,7 +333,6 @@ export default function Dashboard() {
         }
         body{background:var(--bg);color:var(--t1);font-family:var(--fb);font-size:14px;line-height:1.6;-webkit-font-smoothing:antialiased;overflow-x:hidden;}
         
-        /* 🚨 Z-INDEX AND CLICK UNBLOCKING FIXES 🚨 */
         body::before, body::after, canvas, .lp-orb { pointer-events: none !important; z-index: 0 !important; }
         .dash-topbar { position: sticky !important; top: 0; z-index: 999999 !important; pointer-events: auto !important; }
         .dash-scan-bar, .dash-welcome, .dash-xp-bar-wrap, .dash-stats-grid, .dash-promo-grid { position: relative !important; z-index: 5000 !important; pointer-events: auto !important; }
@@ -406,12 +396,6 @@ export default function Dashboard() {
         .dash-stat-val{font-family:var(--fd);font-size:24px;font-weight:800;line-height:1;color:var(--t1);}
         .dash-stat-label{font-size:11px;color:var(--t3);margin-top:2px;text-transform:uppercase;letter-spacing:.04em;font-weight:600;}
         .dash-stat-sub{font-size:11px;color:var(--t3);margin-top:2px;}
-
-        /* ── RATE LIMIT BANNER ── */
-        .dash-rl-banner{display:flex;align-items:flex-start;gap:12px;padding:14px 18px;background:rgba(251,146,60,.07);border:1px solid rgba(251,146,60,.25);border-radius:var(--r-lg);margin-bottom:16px;animation:dash-fadein .35s ease;}
-        @keyframes dash-fadein{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}
-        .dash-rl-body{flex:1;font-size:13px;color:var(--t2);line-height:1.6;}
-        .dash-rl-body strong{color:var(--t1);}
 
         /* ── SCAN BAR ── */
         .dash-scan-bar{background:var(--bg1);border:1px solid var(--bd);border-radius:var(--r-xl);padding:18px 20px;margin-bottom:20px;}
@@ -629,9 +613,6 @@ export default function Dashboard() {
                 <StatCard icon={<Award size={16}/>} label="XP" value={xp.toLocaleString()} accent="#fbbf24" sub={`${xpToNext-xp} to lv 13`}/>
               </div>
 
-              {/* Rate limit banner */}
-              {rateLimitTime && <RateLimitBanner resetTime={rateLimitTime} onDismiss={()=>setRateLimitTime("")}/>}
-
               {/* Promo cards */}
               <div className="dash-promo-grid">
                 <div className="dash-promo-card" style={{ background:"linear-gradient(135deg,rgba(255,107,53,.1),rgba(255,45,120,.05))", border:"1px solid rgba(255,107,53,.2)" }} onClick={()=>setView("swipe")}>
@@ -660,7 +641,6 @@ export default function Dashboard() {
                   <div className="dash-scope-toggle">
                     <button className={`dash-scope-btn ${scope==="gssoc"?"active":""}`} onClick={()=>setScope("gssoc")}>🎯 GSSoC</button>
                     <button className={`dash-scope-btn ${scope==="worldwide"?"active":""}`} onClick={()=>setScope("worldwide")}>🌍 Worldwide</button>
-                    {/* 🚨 NEW SSOC TAB 🚨 */}
                     <button className={`dash-scope-btn ${scope==="ssoc"?"active":""}`} style={{color: scope==="ssoc"?"#fb923c":"var(--t2)"}} onClick={()=>setScope("ssoc")}>🚀 SSOC</button>
                   </div>
                 </div>
@@ -687,7 +667,6 @@ export default function Dashboard() {
                     <option value="beginner">Beginner</option>
                   </select>
                   
-                  {/* ── ANTI-SPAM BUTTON WITH COOLDOWN DISPLAY ── */}
                   <button 
                     className="dash-scan-btn" 
                     onClick={handleManualScan} 
@@ -717,7 +696,6 @@ export default function Dashboard() {
                   <span className="dash-section-badge">{loading?"Scanning…":`${issues.length} results`}</span>
                 </div>
                 
-                {/* 🚨 SSOC COMING SOON RENDER 🚨 */}
                 {scope === "ssoc" ? (
                   <div className="dash-empty">
                     <div className="dash-empty-icon">⏳</div>

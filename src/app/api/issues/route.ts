@@ -43,9 +43,15 @@ async function searchGitHub(q: string, token: string) {
 
 export async function GET(req: NextRequest) {
   try {
+    // 🚨 FIX: Extract token from Frontend Headers if NextAuth Session misses it
+    const authHeader = req.headers.get("authorization");
+    const clientToken = authHeader?.startsWith("Bearer ") ? authHeader.split(" ")[1] : null;
+
     const session = await getServerSession(authOptions);
     const userToken = (session as any)?.accessToken;
-    const GH_TOKEN = userToken || process.env.GITHUB_API_TOKEN || "";
+    
+    // Priority: Client Token -> Session Token -> Vercel ENV Token
+    const GH_TOKEN = clientToken || userToken || process.env.GITHUB_API_TOKEN || "";
 
     const { searchParams } = new URL(req.url);
     const scope     = searchParams.get("scope") || "gssoc";
@@ -53,7 +59,6 @@ export async function GET(req: NextRequest) {
     const label     = searchParams.get("label") || "";
     const query     = searchParams.get("query") || "";
 
-    // Agar SSOC hai toh backend ko kuch karne ki zaroorat nahi hai
     if (scope === "ssoc") {
       return NextResponse.json({ issues: [], total: 0 });
     }
@@ -61,7 +66,7 @@ export async function GET(req: NextRequest) {
     const seen  = new Set<number>();
     const all: any[] = [];
 
-    // 🚨 STRICT 2 DAYS (48 HOURS) LIMIT 🚨
+    // 🚨 STRICT 2 DAYS (48 HOURS) LIMIT
     const d = new Date();
     d.setDate(d.getDate() - 2);
     const sinceDate = d.toISOString().split('T')[0];
