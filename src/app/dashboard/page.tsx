@@ -132,7 +132,7 @@ export default function Dashboard() {
   const [searchQuery, setSearchQuery] = useState("");
   const [language, setLanguage]     = useState("");
   const [label, setLabel]           = useState(""); 
-  const [scope, setScope]           = useState("gssoc"); 
+  const [scope, setScope]           = useState<"gssoc" | "ssoc" | "both">("gssoc"); 
   const [view, setView]             = useState<View>("grid");
   const [toast, setToast]           = useState("");
   const [xp, setXp]                 = useState(650);
@@ -154,7 +154,6 @@ export default function Dashboard() {
 
   useEffect(() => {
     try {
-      // 🔥 AUTO-NUKE OLD SPAM CACHE FOR ALL USERS 🔥
       localStorage.removeItem("oc_cached_issues_gssoc");
       localStorage.removeItem("oc_cached_issues_worldwide");
 
@@ -174,11 +173,6 @@ export default function Dashboard() {
 
   const fetchIssues = useCallback(async () => {
     if (loadingRef.current) return;
-    
-    if (scope === "ssoc") {
-      setIssues([]);
-      return;
-    }
 
     loadingRef.current = true;
     setLoading(true);
@@ -265,7 +259,7 @@ export default function Dashboard() {
   }, [scope, language, label, searchQuery, session]);
 
   const handleManualScan = () => {
-    if (loading || cooldown > 0 || scope === "ssoc") return;
+    if (loading || cooldown > 0) return;
     fetchIssues();
     
     setCooldown(15);
@@ -285,13 +279,13 @@ export default function Dashboard() {
       hasFetched.current = true;
       fetchIssues();
     }
-  }, [status]); 
+  }, [status, fetchIssues]); 
 
   useEffect(() => {
     if (status === "authenticated" && hasFetched.current) {
       fetchIssues();
     }
-  }, [scope]); 
+  }, [scope, fetchIssues]); 
 
   const toggleSave = (e: React.MouseEvent | { preventDefault:()=>void }, issue: any) => {
     e.preventDefault();
@@ -426,8 +420,6 @@ export default function Dashboard() {
         .dash-scope-toggle{display:flex;background:rgba(255,255,255,.04);border:1px solid var(--bd);border-radius:var(--r-md);overflow:hidden;flex-shrink:0;}
         .dash-scope-btn{padding:9px 16px;font-size:12.5px;font-weight:600;cursor:pointer;border:none;background:transparent;color:var(--t2);transition:all .2s;white-space:nowrap;}
         .dash-scope-btn.active{background:rgba(0,229,255,.12);color:var(--cyan);}
-        .dash-scope-btn.ssoc{color:#fb923c;}
-        .dash-scope-btn.ssoc.active{background:rgba(251,146,60,.12);color:#fb923c;}
         .dash-filters-row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}
         .dash-select{background:rgba(255,255,255,.04);border:1px solid var(--bd);border-radius:var(--r-md);padding:9px 14px;color:var(--t1);font-family:var(--fb);font-size:13px;outline:none;cursor:pointer;transition:border-color .2s;}
         .dash-select:focus{border-color:var(--bdh);}
@@ -460,7 +452,7 @@ export default function Dashboard() {
         .dash-promo-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:20px;}
         @media(max-width:640px){.dash-promo-grid{grid-template-columns:1fr;}}
         .dash-promo-card{border-radius:var(--r-xl);padding:22px;position:relative;overflow:hidden;cursor:pointer;transition:transform .25s cubic-bezier(.16,1,.3,1),box-shadow .25s;}
-        .dash-promo-card::after{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(255,255,255,.04) 0%,transparent 60%);pointer-events:none;}
+        .dash-promo-card::after{content:'absolute;inset:0;background:linear-gradient(135deg,rgba(255,255,255,.04) 0%,transparent 60%);pointer-events:none;}
         .dash-promo-card:hover{transform:translateY(-3px);}
         .dash-promo-title{font-family:var(--fd);font-size:19px;font-weight:800;color:var(--t1);margin-bottom:6px;display:flex;align-items:center;gap:8px;}
         .dash-promo-desc{font-size:13px;color:var(--t2);line-height:1.6;margin-bottom:16px;max-width:260px;}
@@ -658,8 +650,8 @@ export default function Dashboard() {
                   </div>
                   <div className="dash-scope-toggle">
                     <button className={`dash-scope-btn ${scope==="gssoc"?"active":""}`} onClick={()=>setScope("gssoc")}>🎯 GSSoC</button>
-                    <button className={`dash-scope-btn ${scope==="worldwide"?"active":""}`} onClick={()=>setScope("worldwide")}>🌍 Worldwide</button>
                     <button className={`dash-scope-btn ${scope==="ssoc"?"active":""}`} style={{color: scope==="ssoc"?"#fb923c":"var(--t2)"}} onClick={()=>setScope("ssoc")}>🚀 SSOC</button>
+                    <button className={`dash-scope-btn ${scope==="both"?"active":""}`} style={{color: scope==="both"?"#a78bfa":"var(--t2)"}} onClick={()=>setScope("both")}>✦ Both</button>
                   </div>
                 </div>
                 <div className="dash-filters-row">
@@ -688,17 +680,17 @@ export default function Dashboard() {
                   <button 
                     className="dash-scan-btn" 
                     onClick={handleManualScan} 
-                    disabled={loading || cooldown > 0 || scope === "ssoc"}
+                    disabled={loading || cooldown > 0}
                     style={{
-                      opacity: (loading || cooldown > 0 || scope === "ssoc") ? 0.6 : 1,
-                      cursor: (loading || cooldown > 0 || scope === "ssoc") ? "not-allowed" : "pointer"
+                      opacity: (loading || cooldown > 0) ? 0.6 : 1,
+                      cursor: (loading || cooldown > 0) ? "not-allowed" : "pointer"
                     }}
                   >
                     <RefreshCw size={13} className={loading?"spin-ico":""}/>
                     {loading ? "Scanning…" : cooldown > 0 ? `Wait ${cooldown}s` : "Scan Fresh Issues"}
                   </button>
                 </div>
-                {lastScan && !loading && scope !== "ssoc" && (
+                {lastScan && !loading && (
                   <div className="dash-last-scan">
                     <div className="dash-last-scan-dot"/>
                     Last scan: {lastScan.toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"})} · {issues.length} zero-comment issues found
@@ -710,22 +702,20 @@ export default function Dashboard() {
               <div className="dash-section">
                 <div className="dash-section-head">
                   <GitPullRequest size={15} className="dash-accent-icon"/>
-                  48-Hour Active Contributions Feed
+                  {scope === "gssoc" && "GSSoC Issues (0 Comments · Unassigned)"}
+                  {scope === "ssoc"  && "SSOC Issues (0 Comments · Unassigned)"}
+                  {scope === "both"  && "GSSoC + SSOC Issues (0 Comments · Unassigned)"}
                   <span className="dash-section-badge">{loading?"Scanning…":`${issues.length} results`}</span>
                 </div>
                 
-                {scope === "ssoc" ? (
-                  <div className="dash-empty">
-                    <div className="dash-empty-icon">⏳</div>
-                    <p style={{ fontSize: "18px", fontWeight: "bold", color: "#fb923c", marginBottom: "8px" }}>SSOC is Coming Soon!</p>
-                    <p>We are actively integrating Social Summer of Code (SSOC) repositories.<br/>Stay tuned for the launch!</p>
-                  </div>
-                ) : loading ? (
+                {loading ? (
                   <div className="dash-issue-grid">{[...Array(9)].map((_,i)=><SkeletonCard key={i}/>)}</div>
                 ) : issues.length === 0 ? (
                   <div className="dash-empty">
                     <div className="dash-empty-icon">🔍</div>
-                    <p>No 48-hour fresh issues found right now.<br/>Try changing the language, label, or checking Worldwide mode.</p>
+                    <p>No fresh {scope === "gssoc" ? "GSSoC" : scope === "ssoc" ? "SSOC" : "GSSoC/SSOC"} issues found right now.
+                    <br/>GitHub only has so many 0-comment issues open at once.
+                    <br/>Try <strong>Both</strong> mode or change the language filter.</p>
                   </div>
                 ) : (
                   <div className="dash-issue-grid">
